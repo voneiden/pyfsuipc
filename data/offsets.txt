@@ -1,0 +1,11 @@
+# Offset data, refer to
+# https://docs.python.org/3/library/struct.html#format-characters
+# 
+# NAME		    		OFFSET	FORMAT	(MULTIPLIER)
+radio_altitude			0x31e4	l	0.00001525878
+ias		        		0x02bc	l	0.0078125
+gps_latitude			0x6010	d
+gps_longitude			0x6018	d
+gps_groundspeed			0x6030	d
+wind_direction			0x0e92	H	0.00549316406
+outside_air_temperature	0x0e8c	H	0.00390625
