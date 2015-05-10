@@ -58,7 +58,7 @@ class MemoryError(FSUIPCError):
         self.value = value
 
 
-mapping = {
+exception_mapping = {
     1: OpenError,
     2: LinkError,
     3: RegisterError,

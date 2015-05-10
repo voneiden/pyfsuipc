@@ -4,7 +4,7 @@ from Cython.Build import cythonize
 
 setup(
     ext_modules = cythonize([
-    Extension("*", ["*.pyx"],
+    Extension("pyfsuipc", ["pyfsuipc.pyx"],
               include_dirs=['./include'],
               library_dirs=['./lib'],
               libraries=["FSUIPC_User"])
