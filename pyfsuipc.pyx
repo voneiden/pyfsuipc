@@ -39,8 +39,11 @@ cdef class Pyfsuipc:
 
     def __cinit__(self):
         """
-        Initialize the class.
-        Only *read_pointers array will remain NULL as they will be initialized on demand
+        Only *read_pointers array will remain NULL as they will be initialized on demand.
+
+        offset_keys is used to determine which read_pointers/write_pointers pointer corresponds to which offset.
+        It's also cdeffed to ensure that it's not accessible from Python side of things, as modifying it without
+        proper care would likely lead into mismatched pointers and a crash.
         """
 
         self.read_keys = []
@@ -54,10 +57,10 @@ cdef class Pyfsuipc:
 
         Parameters
         ----------
-        offset : int
-            determines the offset to be read
+        offset_key : string
+            determines the offset to be read, see self.load_offsets
 
-        result : double, pointer
+        result : int,
         """
 
         try:
@@ -83,12 +86,21 @@ cdef class Pyfsuipc:
         self.read_keys.append(offset_key)
 
         cdef DWORD error
-        fsuipc.FSUIPC_Read(offset, size, ptr, &error)
-        error = 0
-        return error
+        if not fsuipc.FSUIPC_Read(offset, size, ptr, &error):
+            self.handle_error(error)
+
 
 
     def write(self, offset_key, value):
+        """
+        Add a write request in the queue
+
+        Parameters
+        ----------
+        offset_key  : string
+        value   : int or float, based on offset format
+        """
+
         (offset, format, multiplier) = self.offsets[offset_key]
         index = self.offset_keys.index(offset_key)
         size = struct.calcsize(format)
@@ -109,7 +121,8 @@ cdef class Pyfsuipc:
 
         self.set_pointer_value(ptr, format, value)
         cdef DWORD error
-        fsuipc.FSUIPC_Write(offset, size, ptr, &error)
+        if not fsuipc.FSUIPC_Write(offset, size, ptr, &error):
+            self.handle_error(error)
 
 
     def start(self, unsigned long mode=SIM_ANY):
@@ -158,6 +171,14 @@ cdef class Pyfsuipc:
 
 
     def process(self):
+        """
+        Process the queued read and write requests.
+
+        Returns
+        -------
+        results : dict
+            read results in {offset_key: value} format.
+        """
         cdef DWORD error
         if not fsuipc.FSUIPC_Process(&error):
             self.handle_error(error)
@@ -187,11 +208,17 @@ cdef class Pyfsuipc:
 
 
     def read_all(self):
+        """
+        Read all loaded offset values
+        """
         for key in self.offsets.keys():
             self.read(key)
 
 
     def handle_error(self, error):
+        """
+        Handle an error number returned by the FSUIPC_User library
+        """
         if error != 0:
             if error in exception_mapping:
                 raise exception_mapping[error]()
@@ -200,6 +227,12 @@ cdef class Pyfsuipc:
         else:
             return True
 
+    def add_offset(self, key, offset, format, multiplier=1):
+        """
+        Configure a new offset
+        """
+        self.offsets[key] = (offset, format, multiplier)
+        self.offset_keys.append(key)
 
     def load_offsets(self, file_name):
         """
@@ -234,6 +267,9 @@ cdef class Pyfsuipc:
 
 
     cdef void* allocate_format(self, format):
+        """
+        Allocates memory based on the defined offset format.
+        """
         cdef void* ptr
         cdef char *b_ptr
         cdef short *h_ptr
