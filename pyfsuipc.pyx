@@ -22,10 +22,7 @@
 cimport FSUIPC_User as fsuipc
 import struct
 
-#from cpython cimport array as c_array
 from cpython.mem cimport PyMem_Malloc, PyMem_Free
-
-#from array import array
 
 include "exceptions.pyx"
 include "modes.pyx"
@@ -33,24 +30,25 @@ include "modes.pyx"
 ctypedef unsigned long DWORD
 
 
-
 cdef class Pyfsuipc:
-    cdef void *result_pointers[10000]
-    cdef list result_keys
-    cdef list offsets_keys
+    cdef void *read_pointers[10000]
+    cdef void *write_pointers[10000]
+    cdef list read_keys
+    cdef list offset_keys
     cdef dict offsets
 
     def __cinit__(self):
         """
         Initialize the class.
-        Only *result_pointers array will remain NULL as they will be initialized on demand
+        Only *read_pointers array will remain NULL as they will be initialized on demand
         """
 
-        self.result_keys = []
-        self.offsets_keys = []
+        self.read_keys = []
+        self.offset_keys = []
         self.offsets = {}
 
-    def read(self, offset_key, size=None):
+
+    def read(self, offset_key):
         """
         Make a read request to FSUIPC using FSUIPC_User Read call.
 
@@ -59,29 +57,16 @@ cdef class Pyfsuipc:
         offset : int
             determines the offset to be read
 
-        size : short
-            determines the size of the value to be read, must be 8 or less
-
         result : double, pointer
         """
 
-        cdef char *b_ptr
-        cdef short *h_ptr
-        cdef long *l_ptr
-        cdef long long *q_ptr
-        cdef float *f_ptr
-        cdef double *d_ptr
-
-        if isinstance(offset_key, int) and size is not None:
-            raise NotImplementedError
-        else:
-            try:
-                (offset, format, multiplier) = self.offsets[offset_key]
-                index = self.offsets_keys.index(offset_key)
-                size = struct.calcsize(format)
-            except KeyError:
-                print("Error: offset key not found")
-                return
+        try:
+            (offset, format, multiplier) = self.offsets[offset_key]
+            index = self.offset_keys.index(offset_key)
+            size = struct.calcsize(format)
+        except KeyError:
+            print("Error: offset key not found")
+            return
 
         if size > 8:
             print("Error: size too large")
@@ -89,55 +74,42 @@ cdef class Pyfsuipc:
 
         cdef void *ptr
 
-        if self.result_pointers[index] == NULL:
-            print("Allocating new variable")
-            # Allocate result
-            if format == 'b' or format == 'B':
-                b_ptr = <char *> PyMem_Malloc(sizeof(char))
-                b_ptr[0] = 0
-                ptr = <void *> b_ptr
-
-            elif format == 'h' or format == 'H':
-                h_ptr = <short*> PyMem_Malloc(sizeof(short))
-                h_ptr[0] = 0
-                ptr = <void*> h_ptr
-
-            elif format == 'i' or format == 'I' or format == 'l' or format == 'l':
-                l_ptr = <long*> PyMem_Malloc(sizeof(long))
-                l_ptr[0] = 0
-                ptr = <void*> l_ptr
-
-            elif format == 'q' or format == 'Q':
-                q_ptr = <long long*> PyMem_Malloc(sizeof(long long))
-                q_ptr[0] = 0
-                ptr = <void*> q_ptr
-
-            elif format == 'f':
-                f_ptr = <float*> PyMem_Malloc(sizeof(float))
-                f_ptr[0] = 0
-                ptr = <void *> f_ptr
-
-            elif format == 'd':
-                d_ptr = <double*> PyMem_Malloc(sizeof(double))
-                d_ptr[0] = 0
-                ptr = <void *> d_ptr
-
-            else:
-                raise NotImplementedError
-
-            if not ptr:
-                raise MemoryError
-
-            self.result_pointers[index] = ptr
+        if self.read_pointers[index] == NULL:
+            ptr = self.allocate_format(format)
+            self.read_pointers[index] = ptr
         else:
-            ptr = self.result_pointers[index]
+            ptr = self.read_pointers[index]
 
-        self.result_keys.append(offset_key)
+        self.read_keys.append(offset_key)
 
         cdef DWORD error
         fsuipc.FSUIPC_Read(offset, size, ptr, &error)
         error = 0
         return error
+
+
+    def write(self, offset_key, value):
+        (offset, format, multiplier) = self.offsets[offset_key]
+        index = self.offset_keys.index(offset_key)
+        size = struct.calcsize(format)
+
+        # Verify the value type
+        if format != 'f' and format != 'd':
+            if not isinstance(value, int):
+                value = int(value)
+        else:
+            assert isinstance(value, float)
+
+        cdef void *ptr
+        if self.read_pointers[index] == NULL:
+            ptr = self.allocate_format(format)
+            self.write_pointers[index] = ptr
+        else:
+            ptr = self.read_pointers[index]
+
+        self.set_pointer_value(ptr, format, value)
+        cdef DWORD error
+        fsuipc.FSUIPC_Write(offset, size, ptr, &error)
 
 
     def start(self, unsigned long mode=SIM_ANY):
@@ -161,12 +133,14 @@ cdef class Pyfsuipc:
         _ready = True
         return True
 
+
     def stop(self):
         """
         Wrapper for FSUIPC_User Close call. Closes the connection to FSUIPC.
         """
         fsuipc.FSUIPC_Close()
         _ready = False
+
 
     def version(self):
         """
@@ -182,6 +156,7 @@ cdef class Pyfsuipc:
         else:
             raise ExecuteError()
 
+
     def process(self):
         cdef DWORD error
         if not fsuipc.FSUIPC_Process(&error):
@@ -193,70 +168,28 @@ cdef class Pyfsuipc:
         cdef long *l_ptr
         cdef unsigned short *h_ptr
 
-        print("Starting process")
         results = {}
 
-        for i in range(len(self.result_keys)):
-            key = self.result_keys[i]
+        for i in range(len(self.read_keys)):
+            key = self.read_keys[i]
             (offset, format, multiplier) = self.offsets[key]
-            index = self.offsets_keys.index(key)
+            index = self.offset_keys.index(key)
 
-            ptr = self.result_pointers[index]
-            if ptr == NULL:
-                raise RuntimeError
+            value = self.get_pointer_value(self.read_pointers[index], format)
 
-            if format == 'b':
-                value = (<char*> ptr)[0]
-
-            elif format == 'B':
-                value = (<unsigned char*> ptr)[0]
-
-            elif format == 'h':
-                value = (<short*> ptr)[0]
-
-            elif format == 'H':
-                value = (<unsigned short*> ptr)[0]
-
-            elif format == 'i':
-                value = (<int*> ptr)[0]
-
-            elif format == 'I':
-                value = (<unsigned int*> ptr)[0]
-
-            elif format == 'l':
-                value = (<long*> ptr)[0]
-
-            elif format == 'L':
-                value = (<unsigned long*> ptr)[0]
-
-            elif format == 'q':
-                value = (<long long*> ptr)[0]
-
-            elif format == 'Q':
-                value = (<unsigned long long*> ptr)[0]
-
-            elif format == 'f':
-                value = (<float*> ptr)[0]
-
-            elif format == 'd':
-                value = (<double*> ptr)[0]
-
-            else: # This must fail because it shouldn't happen here
-                raise NotImplementedError
-
-            print("Print")
-            print(key, value)
             value *= multiplier
             results[key] = value
 
         # Clear the result keys list
-        self.result_keys = []
+        self.read_keys = []
 
         return results
+
 
     def read_all(self):
         for key in self.offsets.keys():
             self.read(key)
+
 
     def handle_error(self, error):
         if error != 0:
@@ -266,6 +199,7 @@ cdef class Pyfsuipc:
                 raise FSUIPCError()
         else:
             return True
+
 
     def load_offsets(self, file_name):
         """
@@ -296,5 +230,148 @@ cdef class Pyfsuipc:
 
             if name not in self.offsets:
                 self.offsets[name] = (offset, format, multiplier)
-                self.offsets_keys.append(name)
+                self.offset_keys.append(name)
 
+
+    cdef void* allocate_format(self, format):
+        cdef void* ptr
+        cdef char *b_ptr
+        cdef short *h_ptr
+        cdef long *l_ptr
+        cdef long long *q_ptr
+        cdef float *f_ptr
+        cdef double *d_ptr
+
+        if format == 'b' or format == 'B':
+            b_ptr = <char *> PyMem_Malloc(sizeof(char))
+            b_ptr[0] = 0
+            ptr = <void *> b_ptr
+
+        elif format == 'h' or format == 'H':
+            h_ptr = <short*> PyMem_Malloc(sizeof(short))
+            h_ptr[0] = 0
+            ptr = <void*> h_ptr
+
+        elif format == 'i' or format == 'I' or format == 'l' or format == 'l':
+            l_ptr = <long*> PyMem_Malloc(sizeof(long))
+            l_ptr[0] = 0
+            ptr = <void*> l_ptr
+
+        elif format == 'q' or format == 'Q':
+            q_ptr = <long long*> PyMem_Malloc(sizeof(long long))
+            q_ptr[0] = 0
+            ptr = <void*> q_ptr
+
+        elif format == 'f':
+            f_ptr = <float*> PyMem_Malloc(sizeof(float))
+            f_ptr[0] = 0
+            ptr = <void *> f_ptr
+
+        elif format == 'd':
+            d_ptr = <double*> PyMem_Malloc(sizeof(double))
+            d_ptr[0] = 0
+            ptr = <void *> d_ptr
+
+        else:
+            raise NotImplementedError
+
+        if not ptr:
+                raise MemoryError
+
+        return ptr
+
+
+    cdef get_pointer_value(self, void *ptr, format):
+        """
+        Dereference a ptr depending on respective format
+        """
+        if ptr == NULL:
+            raise RuntimeError
+
+        if format == 'b':
+            value = (<char*> ptr)[0]
+
+        elif format == 'B':
+            value = (<unsigned char*> ptr)[0]
+
+        elif format == 'h':
+            value = (<short*> ptr)[0]
+
+        elif format == 'H':
+            value = (<unsigned short*> ptr)[0]
+
+        elif format == 'i':
+            value = (<int*> ptr)[0]
+
+        elif format == 'I':
+            value = (<unsigned int*> ptr)[0]
+
+        elif format == 'l':
+            value = (<long*> ptr)[0]
+
+        elif format == 'L':
+            value = (<unsigned long*> ptr)[0]
+
+        elif format == 'q':
+            value = (<long long*> ptr)[0]
+
+        elif format == 'Q':
+            value = (<unsigned long long*> ptr)[0]
+
+        elif format == 'f':
+            value = (<float*> ptr)[0]
+
+        elif format == 'd':
+            value = (<double*> ptr)[0]
+
+        else: # This must fail because it shouldn't happen here
+            raise NotImplementedError
+
+        return value
+
+
+    cdef set_pointer_value(self, void *ptr, format, value):
+        """
+        Set the value of a pointer based on the format
+        """
+        if ptr == NULL:
+            raise RuntimeError
+
+        if format == 'b':
+            (<char*> ptr)[0] = value
+
+        elif format == 'B':
+            (<unsigned char*> ptr)[0] = value
+
+        elif format == 'h':
+            (<short*> ptr)[0] = value
+
+        elif format == 'H':
+            (<unsigned short*> ptr)[0] = value
+
+        elif format == 'i':
+            (<int*> ptr)[0] = value
+
+        elif format == 'I':
+            (<unsigned int*> ptr)[0] = value
+
+        elif format == 'l':
+            (<long*> ptr)[0] = value
+
+        elif format == 'L':
+            (<unsigned long*> ptr)[0] = value
+
+        elif format == 'q':
+            (<long long*> ptr)[0] = value
+
+        elif format == 'Q':
+            (<unsigned long long*> ptr)[0] = value
+
+        elif format == 'f':
+            (<float*> ptr)[0] = value
+
+        elif format == 'd':
+            (<double*> ptr)[0] = value
+
+        else: # This must fail because it shouldn't happen here
+            raise NotImplementedError
