@@ -65,9 +65,12 @@ cdef class Pyfsuipc:
         result : double, pointer
         """
 
-        cdef double *d_ptr
+        cdef char *b_ptr
+        cdef short *h_ptr
         cdef long *l_ptr
-        cdef unsigned short *h_ptr
+        cdef long long *q_ptr
+        cdef float *f_ptr
+        cdef double *d_ptr
 
         if isinstance(offset_key, int) and size is not None:
             raise NotImplementedError
@@ -89,23 +92,35 @@ cdef class Pyfsuipc:
         if self.result_pointers[index] == NULL:
             print("Allocating new variable")
             # Allocate result
-            if format == 'd':
+            if format == 'b' or format == 'B':
+                b_ptr = <char *> PyMem_Malloc(sizeof(char))
+                b_ptr[0] = 0
+                ptr = <void *> b_ptr
+
+            elif format == 'h' or format == 'H':
+                h_ptr = <short*> PyMem_Malloc(sizeof(short))
+                h_ptr[0] = 0
+                ptr = <void*> h_ptr
+
+            elif format == 'i' or format == 'I' or format == 'l' or format == 'l':
+                l_ptr = <long*> PyMem_Malloc(sizeof(long))
+                l_ptr[0] = 0
+                ptr = <void*> l_ptr
+
+            elif format == 'q' or format == 'Q':
+                q_ptr = <long long*> PyMem_Malloc(sizeof(long long))
+                q_ptr[0] = 0
+                ptr = <void*> q_ptr
+
+            elif format == 'f':
+                f_ptr = <float*> PyMem_Malloc(sizeof(float))
+                f_ptr[0] = 0
+                ptr = <void *> f_ptr
+
+            elif format == 'd':
                 d_ptr = <double*> PyMem_Malloc(sizeof(double))
                 d_ptr[0] = 0
                 ptr = <void *> d_ptr
-            elif format == 'l':
-                l_ptr = <long*> PyMem_Malloc(sizeof(long))
-                l_ptr[0] = 0
-                ptr = <void *> l_ptr
-                print("Long allocated")
-
-                l_ptr = <long *> ptr
-                print(l_ptr[0])
-
-            elif format == 'H':
-                h_ptr = <unsigned short*> PyMem_Malloc(sizeof(short))
-                h_ptr[0] = 0
-                ptr = <void*> h_ptr
 
             else:
                 raise NotImplementedError
@@ -190,18 +205,41 @@ cdef class Pyfsuipc:
             if ptr == NULL:
                 raise RuntimeError
 
-            if format == 'd':
-                d_ptr = <double*> ptr
-                value = d_ptr[0]
+            if format == 'b':
+                value = (<char*> ptr)[0]
 
-            elif format == 'l':
-                l_ptr = <long*> ptr
-                value = l_ptr[0]
+            elif format == 'B':
+                value = (<unsigned char*> ptr)[0]
 
+            elif format == 'h':
+                value = (<short*> ptr)[0]
 
             elif format == 'H':
-                h_ptr = <unsigned short*> ptr
-                value = h_ptr[0]
+                value = (<unsigned short*> ptr)[0]
+
+            elif format == 'i':
+                value = (<int*> ptr)[0]
+
+            elif format == 'I':
+                value = (<unsigned int*> ptr)[0]
+
+            elif format == 'l':
+                value = (<long*> ptr)[0]
+
+            elif format == 'L':
+                value = (<unsigned long*> ptr)[0]
+
+            elif format == 'q':
+                value = (<long long*> ptr)[0]
+
+            elif format == 'Q':
+                value = (<unsigned long long*> ptr)[0]
+
+            elif format == 'f':
+                value = (<float*> ptr)[0]
+
+            elif format == 'd':
+                value = (<double*> ptr)[0]
 
             else: # This must fail because it shouldn't happen here
                 raise NotImplementedError
