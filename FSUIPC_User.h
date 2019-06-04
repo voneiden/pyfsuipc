@@ -1,8 +1,5 @@
 #ifndef _FSUIPC_H_
 #define _FSUIPC_H_
-typedef unsigned long DWORD, *PDWORD, *LPDWORD;
-typedef int BOOL, *PBOOL, *LPBOOL;
-typedef unsigned char BYTE, *PBYTE, *LPBYTE;
 
 // Supported Sims
 #define SIM_ANY	0
